@@ -7,6 +7,22 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, Comma
 from dotenv import load_dotenv
 from rag_engine import find_similar_chunks
 from openai import OpenAI
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+PORT = int(os.environ.get("PORT", 8080))
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+def run_server():
+    server = HTTPServer(("0.0.0.0", PORT), SimpleHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
 
 client = OpenAI()
 
@@ -149,5 +165,6 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("✅ Bot is running...")
     app.run_polling()
+
 
 
