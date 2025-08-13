@@ -7,32 +7,16 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, Comma
 from dotenv import load_dotenv
 from rag_engine import find_similar_chunks
 from openai import OpenAI
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
-PORT = int(os.environ.get("PORT", 8080))
-
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
-
-def run_server():
-    server = HTTPServer(("0.0.0.0", PORT), SimpleHandler)
-    server.serve_forever()
-
-threading.Thread(target=run_server, daemon=True).start()
-
-client = OpenAI()
-
-
+# Load environment variables
 load_dotenv()
 TELEGRAM_API_KEY = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+client = OpenAI()
 client.api_key = OPENAI_API_KEY
 
-# Your system prompt (same as before)
+# System prompt
 SYSTEM_PROMPT = """Ты — заботливый, умный и харизматичный медицинский ассистент команды Nikolife. 
 Ты эксперт по метаболическому здоровью, снижению веса, питанию, гормонам и БАДам.
 
@@ -46,20 +30,21 @@ SYSTEM_PROMPT = """Ты — заботливый, умный и харизмат
 
 📌 Формат при наличии данных в базе:
 Начни с приветствия: "🌿 Спасибо за вопрос и добро пожаловать в семью Nikolife!"
-Дай развернутый, насыщенный фактами и цифрами ответ, используй уместные эмодзи (7-10).Пусть ответы будут длинными, но подробными, без глупостей, и формулируйте их в виде приказов, например, вам следует выходить на прогулку в течение 30 минут каждый день.  Используйте мотивирующие фразы и ведите себя как ваш лучший друг, с юмором и заботой
+Дай развернутый, насыщенный фактами и цифрами ответ, используй уместные эмодзи (7–10). Пусть ответы будут длинными, но подробными, и формулируй их в виде приказов, например, вам следует выходить на прогулку в течение 30 минут каждый день. Используйте мотивирующие фразы и ведите себя как лучший друг.
 
 🚀 Если в базе данных нет информации:
 Скажи: " 🌿 Спасибо за вопрос и добро пожаловать в семью Nikolife! 😔 К сожалению, в нашей базе нет информации по вашему запросу… но я — умный ассистент, и вот что я могу рассказать!"
-Дай яркий, интересный, полезный и запоминающийся ответ в крутом, современном стиле с эмодзи и лёгким юмором. Пусть ответы будут длинными, но подробными, без глупостей.
+Дай яркий, полезный и запоминающийся ответ с эмодзи и лёгким юмором.
 
 ✨ Твоя цель:
-Вдохновить, обучить, поддержать и дать человеку чёткий, практичный план действий, а не общие фразы.
+Вдохновить, обучить, поддержать и дать чёткий, практичный план действий.
 """
 
 logging.basicConfig(level=logging.INFO)
 
 DB_FILE = "logs.db"
 
+# --- Database functions ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -94,6 +79,7 @@ def get_user_history(user_id, limit=5):
         history_texts.append(f"User: {q}\nAssistant: {r}")
     return "\n".join(history_texts)
 
+# --- Conversation memory ---
 user_conversations = {}
 
 async def ask_openai(user_id, user_prompt, context_chunks=None):
@@ -115,7 +101,6 @@ async def ask_openai(user_id, user_prompt, context_chunks=None):
     user_conversations[user_id].append({"role": "user", "content": user_prompt})
     recent_history = user_conversations[user_id][-10:]
 
-    # Call the new OpenAI API
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "system", "content": SYSTEM_PROMPT}] + recent_history,
@@ -127,7 +112,7 @@ async def ask_openai(user_id, user_prompt, context_chunks=None):
     user_conversations[user_id].append({"role": "assistant", "content": bot_reply})
     return bot_reply
 
-
+# --- Telegram handlers ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text
     user_id = update.effective_user.id
@@ -137,7 +122,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     used_knowledge_base = bool(matched_chunks)
 
     response = await ask_openai(user_id, user_input, matched_chunks if used_knowledge_base else None)
-
     save_log(user_id, user_input, response)
 
     await context.bot.send_message(chat_id=chat_id, text=response)
@@ -152,19 +136,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Рассказать, как улучшить сон и энергию 😴⚡\n"
         "• Подсказать дозировки витаминов и БАДов 💊\n"
         "• Дать советы по тренировкам и восстановлению 🏋️‍♂️\n\n"
-        "💬 Просто напиши свой вопрос — и мы начнём!\n"
-        "_Например_: 'Как повысить уровень витамина D?' или 'Составь план для снижения веса'.\n\n"
-        "🚀 Готов? Тогда поехали!"
+        "💬 Просто напиши свой вопрос — и мы начнём!"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
+# --- Main ---
 if __name__ == "__main__":
     init_db()
     app = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("✅ Bot is running...")
+    print("✅ Bot is running via long polling...")
     app.run_polling()
-
-
-
